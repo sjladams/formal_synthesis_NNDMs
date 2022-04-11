@@ -1,14 +1,14 @@
 import numpy as np
 
-# Verification / Synthesis
-VERF_K = 20
-VERF_P = 0.95
-VERF_PROJ_DIMS = [0,1]
-VERF_SPEC_TYPE = 'jackson-nl-compl'
-if VERF_SPEC_TYPE == 'jackson-nl-compl':
-    VERF_USE_LTL = True
+# Synthesis
+SYNT_K = 20
+SYNT_P = 0.95
+SYNT_PROJ_DIMS = [0,1]
+SYNT_SPEC_TYPE = 'jackson-nl-compl'
+if SYNT_SPEC_TYPE == 'jackson-nl-compl':
+    SYNT_USE_LTLF = True
 else:
-    VERF_USE_LTL = False
+    SYNT_USE_LTLF = False
 
 # NN
 NEURONS = 20
