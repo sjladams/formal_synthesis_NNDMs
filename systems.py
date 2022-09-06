@@ -94,6 +94,7 @@ class JacksonMode4NL:
 
 
 # Non-Linear - Alternative - 4 Modes
+
 class JacksonMode1NLAlt:
     def x0(self, xs):
         return xs[0] + 0.35 + 0.1*np.sin(xs[1])

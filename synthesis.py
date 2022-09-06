@@ -529,7 +529,7 @@ class Synthesis:
             for bound, region in zip(bounds, self.projection_rects):
                 vertices = cartesian_product(region)
                 pgon_S_tilde = plt.Polygon(order_pol_points(vertices), True,
-                                           color=cmap(bound - min_ref / (max_ref - min_ref)), alpha=0.8, fill=True)
+                                           color=cmap((bound - min_ref) / (max_ref - min_ref)), alpha=0.8, fill=True)
                 ax.add_patch(pgon_S_tilde)
 
         if mark_des:

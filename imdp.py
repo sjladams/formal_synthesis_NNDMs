@@ -21,14 +21,15 @@ class IMDP:
         for tag in crown_bounds_all:
             imc = IMC(tag)
             imc.A_u, imc.A_l, imc.b_u, imc.b_l = get_explicit_bounds(crown_bounds_all[tag], centers)
-            imc.trans_bounds, TEST_CROWN_PERF = bound_transition_kernel(imc.A_u, imc.A_l, imc.b_u, imc.b_l, self.vertices, self.centers,
-                                                        self.rectangles, self.grid_sorting)
-            imc.trans_bounds[:,-1,:] = np.array([1-imc.trans_bounds[:,-1,1], 1-imc.trans_bounds[:,-1,0]]).T
-            imc.trans_bounds[-1,:,:] = 0
-            imc.trans_bounds[-1,-1,:] = 1
+            imc.trans_bounds = bound_transition_kernel(imc.A_u, imc.A_l, imc.b_u, imc.b_l,
+                                                                        self.vertices, self.centers,
+                                                                        self.rectangles, self.grid_sorting)
+            imc.trans_bounds[:, -1, :] = np.array([1 - imc.trans_bounds[:, -1, 1], 1 - imc.trans_bounds[:, -1, 0]]).T
+            imc.trans_bounds[-1, :, :] = 0
+            imc.trans_bounds[-1, -1, :] = 1
 
             # TEMP
-            imc.TEST_CROWN_PERF = TEST_CROWN_PERF
+            # imc.TEST_CROWN_PERF = TEST_CROWN_PERF
 
             self.imcs[tag] = imc
 
@@ -45,7 +46,6 @@ class IMDP:
         self.vertices = replace_elems(self.vertices, new_vertices, tags2remove)
         self.grid_sorting = overlap_discretization(self.rectangles)
 
-
     def adapt_grid(self, imc, tags2remove, crown_bounds, new_centers, new_vertices, new_grid_sorting, new_rectangles):
         trans_bounds_2be_refined = copy(imc.trans_bounds)
 
@@ -60,21 +60,21 @@ class IMDP:
 
         trans_bounds_part1 = bound_transition_kernel(A_u, A_l, b_u, b_l, new_vertices, self.centers, self.rectangles,
                                                      self.grid_sorting)
-        trans_bounds_part1[:, -1, :] = np.array([1-trans_bounds_part1[:, -1, 1], 1-trans_bounds_part1[:, -1, 0]]).T
+        trans_bounds_part1[:, -1, :] = np.array([1 - trans_bounds_part1[:, -1, 1], 1 - trans_bounds_part1[:, -1, 0]]).T
 
         trans_bounds_part2 = bound_transition_kernel(imc.A_u, imc.A_l, imc.b_u, imc.b_l, self.vertices, new_centers,
-                                               new_rectangles, new_grid_sorting)
+                                                     new_rectangles, new_grid_sorting)
         trans_bounds_part2[-1, :, :] = 0
 
         trans_bounds_part3 = bound_transition_kernel(A_u, A_l, b_u, b_l, new_vertices, new_centers, new_rectangles,
-                                               new_grid_sorting)
+                                                     new_grid_sorting)
 
         # First merge, then remove, because part 2 also contains the old x regions, is possible because we append (-1)
         # the refined values
         old_merged_part2 = np.concatenate((trans_bounds_2be_refined[:, :-1], trans_bounds_part2,
-                                       trans_bounds_2be_refined[:, -1][:, np.newaxis]), axis=1)
+                                           trans_bounds_2be_refined[:, -1][:, np.newaxis]), axis=1)
         part1_merged_part3 = np.concatenate((trans_bounds_part1[:, :-1], trans_bounds_part3,
-                                          trans_bounds_part1[:, -1][:, np.newaxis]), axis=1)
+                                             trans_bounds_part1[:, -1][:, np.newaxis]), axis=1)
         trans_bounds_2be_refined = np.concatenate((old_merged_part2[:-1], part1_merged_part3,
                                                    old_merged_part2[-1][np.newaxis]), axis=0)
         trans_bounds_2be_refined = np.delete(trans_bounds_2be_refined, tags2remove, axis=0)
@@ -101,26 +101,32 @@ class IMC:
 
 
 def bound_transition_kernel(A_u, A_l, b_u, b_l, vertices, centers, rectangles, grid_sorting):
+    H = np.concatenate((np.matmul(vertices, np.moveaxis(A_u, 2, 1)) + np.repeat(b_u[:, np.newaxis], axis=1,
+                                                                                repeats=vertices.shape[1]),
+                        np.matmul(vertices, np.moveaxis(A_l, 2, 1)) + np.repeat(b_l[:, np.newaxis], axis=1,
+                                                                                repeats=vertices.shape[1])), axis=1)
+
+    # Overapproximation One-step reachable polytope
+    H_rects = np.concatenate((np.min(H, axis=1)[:, :, np.newaxis], np.max(H, axis=1)[:, :, np.newaxis]), axis=2)
+    H_rects = np.round(H_rects, 3)
+
+    grid_masks = group_grid_wrt_rectangles(H_rects, grid_sorting)
+
+    trans_bounds = get_trans_bounds(H, H_rects, centers, rectangles, grid_masks,
+                                    use_H=True)
+    trans_bounds = trans_bounds.detach().numpy()
+
+    # TEMP
     H_u = np.matmul(vertices, np.moveaxis(A_u, 2, 1)) + np.repeat(b_u[:, np.newaxis], axis=1,
                                                                   repeats=vertices.shape[1])
     H_l = np.matmul(vertices, np.moveaxis(A_l, 2, 1)) + np.repeat(b_l[:, np.newaxis], axis=1,
                                                                   repeats=vertices.shape[1])
-
-    # Overapproximation One-step reachable polytope
-    H_rects_u = np.max(np.max([H_l, H_u], axis=0), axis=1)
-    H_rects_l = np.min(np.min([H_l, H_u], axis=0), axis=1)
-    H_rects = np.round(np.concatenate((H_rects_l[:, :, np.newaxis], H_rects_u[:, :, np.newaxis]), axis=2), 3)
-
-    grid_masks = group_grid_wrt_rectangles(H_rects, grid_sorting)
-
-    trans_bounds = get_trans_bounds_using_H_rect(H_rects, centers, rectangles, grid_masks)
-    trans_bounds = trans_bounds.detach().numpy()
-
     TEST_CROWN_PERF = {'H_u': H_u, 'H_l': H_l, 'H_rects': H_rects}
-    return trans_bounds, TEST_CROWN_PERF
+    return trans_bounds
 
 
-def get_trans_bounds_using_H_rect(H_rects, grid_centers, grid_rects, grid_masks):
+def get_trans_bounds(H: np.array, H_rects: np.array, grid_centers: np.array, grid_rects: np.array, grid_masks: dict,
+                     use_H: bool = False): # \TODO rewrite using einsum
     # TEMP TRANSFORM
     H_rects = torch.from_numpy(H_rects).float()
     grid_centers = torch.from_numpy(grid_centers).float()
@@ -131,6 +137,7 @@ def get_trans_bounds_using_H_rect(H_rects, grid_centers, grid_rects, grid_masks)
     groups = list(itertools.product([0, 1, 2], repeat=n))
     nr_H_rects = H_rects.shape[0]
     nr_grid_rects = grid_centers.shape[0]
+    std_torch = torch.from_numpy(STD)
 
     # find locations ----------------------------------------------------------------------------------------------
     max_locs = torch.zeros((nr_H_rects, nr_grid_rects, n))
@@ -141,22 +148,39 @@ def get_trans_bounds_using_H_rect(H_rects, grid_centers, grid_rects, grid_masks)
     # overlap group (2,2,2,..) ------------------------------------------------------------------------------------
     overlap_group_index = groups.index(tuple(2 for _ in range(0, n)))
     overlap_group_tag = tuple(2 for _ in range(0, n))
+
+    # by grouping, maximum at centrum of overlapping groups
     max_locs[grid_masks[overlap_group_tag].row, grid_masks[overlap_group_tag].col] = grid_centers[
         grid_masks[overlap_group_tag].col]
-    H_rects_centers = torch.tile(torch.mean(H_rects, 2)[:, None], (1, nr_grid_rects, 1))
-
-    # \TODO can be done more efficient! by only checking relevant rows/cols
-    centers_comparison = grid_centers[None] < H_rects_centers
 
     overlap_group_mask = grid_masks[overlap_group_tag]
-    # convert to np.array due to: https://github.com/pytorch/pytorch/issues/45125
-    overlap_group_mask_dims = np.array(centers_comparison[overlap_group_mask.row, overlap_group_mask.col])
-    for dim in range(0, n):
-        maskDim = overlap_group_mask_dims[:, dim]
-        min_locs[overlap_group_mask.row[maskDim], overlap_group_mask.col[maskDim], dim] = \
-            H_rects[overlap_group_mask.row[maskDim], dim, 1]
-        min_locs[overlap_group_mask.row[~maskDim], overlap_group_mask.col[~maskDim], dim] = \
-            H_rects[overlap_group_mask.row[~maskDim], dim, 0]
+    H_rects_centers = torch.tile(torch.mean(H_rects, 2)[:, None], (1, nr_grid_rects, 1))
+    if use_H:
+        # minimum - if using H
+        H = torch.from_numpy(H).float()
+        min_locs_overlap = H[overlap_group_mask.row]
+
+        min_lower_overlap = torch.erf(torch.divide(min_locs_overlap - torch.tile(
+            grid_rects[overlap_group_mask.col][:, :, 0][:, None], (1, H.shape[1], 1)), std_torch * np.sqrt(2)))
+        min_upper_overlap = torch.erf(torch.divide(min_locs_overlap - torch.tile(
+            grid_rects[overlap_group_mask.col][:, :, 1][:, None], (1, H.shape[1], 1)), std_torch * np.sqrt(2)))
+
+        trans_bounds_min_overlap = (1 / 2 ** n) * torch.prod(min_lower_overlap - min_upper_overlap, 2)
+        min_locs[overlap_group_mask.row, overlap_group_mask.col] = H[
+            overlap_group_mask.row, trans_bounds_min_overlap.argmin(dim=1)]
+    else:
+        # minimum - if using H_rects
+        centers_comparison = grid_centers[
+                                 None] < H_rects_centers  # \TODO can be done more efficient! by only checking relevant rows/cols
+
+        # convert to np.array due to: https://github.com/pytorch/pytorch/issues/45125
+        overlap_group_mask_dims = np.array(centers_comparison[overlap_group_mask.row, overlap_group_mask.col])
+        for dim in range(0, n):
+            maskDim = overlap_group_mask_dims[:, dim]
+            min_locs[overlap_group_mask.row[maskDim], overlap_group_mask.col[maskDim], dim] = \
+                H_rects[overlap_group_mask.row[maskDim], dim, 1]
+            min_locs[overlap_group_mask.row[~maskDim], overlap_group_mask.col[~maskDim], dim] = \
+                H_rects[overlap_group_mask.row[~maskDim], dim, 0]
 
     # partly overlapping groups (.,2,.,., ..) ---------------------------------------------------------------------
     partly_indices = np.where(np.array([2 in elem for elem in groups if elem != groups[overlap_group_index]]))[0]
@@ -220,7 +244,6 @@ def get_trans_bounds_using_H_rect(H_rects, grid_centers, grid_rects, grid_masks)
         min_locs[group_mask.row, group_mask.col] = H_rects[group_mask.row][:, i_mask, min_mask]
 
     # -- Evaluate gaussian ----------------------------------------------------------------------------------------
-    std_torch = torch.from_numpy(STD)
     min_lower = torch.erf(torch.divide(min_locs - grid_rects[:, :, 0], std_torch * np.sqrt(2)))
     min_upper = torch.erf(torch.divide(min_locs - grid_rects[:, :, 1], std_torch * np.sqrt(2)))
     max_lower = torch.erf(torch.divide(max_locs - grid_rects[:, :, 0], std_torch * np.sqrt(2)))
@@ -254,5 +277,5 @@ def get_explicit_bounds(crown_bounds: dict, centers: np.array):
             b_L[count] = crown_bounds[tuple(center)]['b_L']
         else:
             raise ValueError('No CROWN bounds given for rectangle: ({}:{}) -> used non-informative bounds'.format(
-                count,center))
+                count, center))
     return A_U, A_L, b_U, b_L
