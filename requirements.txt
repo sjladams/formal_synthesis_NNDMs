@@ -1,0 +1,8 @@
+numpy
+torch
+matplotlib
+numba
+scipy
+sklearn
+tensorflow
+bound_propagation==0.1.1
