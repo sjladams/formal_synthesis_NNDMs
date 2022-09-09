@@ -177,6 +177,12 @@ def train_model(model_path: str, system: 'ImportSystem', plot: bool = False):
     if plot:
         plot_learned_sys_phase_portrait(pytorch_model)
 
+    # Check if the models/ directory exist, if not create it.
+    model_dir = DIRPATH + "/models"
+    check_model_dir = os.path.isdir(model_dir)
+    if not check_model_dir:
+        os.makedirs(model_dir)
+
     torch.save(pytorch_model.state_dict(), model_path)
     return pytorch_model
 
