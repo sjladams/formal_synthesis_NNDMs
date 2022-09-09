@@ -163,7 +163,7 @@ def import_model(system_type: str, plot: bool):
 
     if check:
         model = load_model(model_path, system, plot)
-        print('used pre-trained model')
+        print(f'used pre-trained model for system type: {system_type}')
     else:
         model = train_model(model_path, system, plot)
     return {'sys': system, 'nn': model}
