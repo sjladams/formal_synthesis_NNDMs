@@ -3,6 +3,6 @@ torch
 matplotlib
 numba
 scipy
-sklearn
+scikit-learn
 tensorflow
 bound_propagation==0.1.1
