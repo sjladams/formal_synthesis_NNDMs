@@ -11,18 +11,18 @@ import subprocess
 import matplotlib.colors as mcolors
 
 from support import order_pol_points, generate_domain_limits, cartesian_product
-from safety_specifications import SAFETY_SPECS
-from parameters import STATE_SPACE
 
 DIRPATH = os.path.dirname(__file__)
 
+
 class Synthesis:
-    def __init__(self, imdp: 'IMDP', spec_type: str, k: int = 10, p: float = 0.95, bound: str = '>=',
-                 use_cpp: bool = False, proj_dims: list = [0, 1], use_LTL: bool = False,
-                 dest_tag: str = 'D', obs_tag: str = 'O'):
-        self.use_ltlf = use_LTL
+    def __init__(self, imdp: 'IMDP', ss: np.array, spec: dict, k: int = 10, p: float = 0.95, bound: str = '>=',
+                 use_cpp: bool = False, proj_dims: list = [0, 1], use_ltlf: bool = False,
+                 dest_tag: str = 'D', obs_tag: str = 'O', **kwargs):
+        self.ss = ss
+        self.use_ltlf = use_ltlf
         self.proj_dims = proj_dims
-        self.spec_type = spec_type
+        self.spec = spec
         self.k = k
         self.p = p
         self.bound = bound
@@ -86,14 +86,14 @@ class Synthesis:
                 self.init_ltlf_steps()
 
     def init_checking_state_regions(self):
-        region_types = list(SAFETY_SPECS[self.spec_type].keys())
+        region_types = list(self.spec.keys())
         self.checking_states = dict()
         for regionType in region_types:
             self.checking_states[regionType] = dict()
-            for tag in SAFETY_SPECS[self.spec_type][regionType]:
-                self.checking_states[regionType][tag] = copy(STATE_SPACE)
-                for dim in SAFETY_SPECS[self.spec_type][regionType][tag]:
-                    self.checking_states[regionType][tag][dim] = SAFETY_SPECS[self.spec_type][regionType][tag][dim]
+            for tag in self.spec[regionType]:
+                self.checking_states[regionType][tag] = copy(self.ss)
+                for dim in self.spec[regionType][tag]:
+                    self.checking_states[regionType][tag][int(dim),:] = self.spec[regionType][tag][dim]
 
     def init_labels(self):
         self.labels = {state: np.zeros(self.imdp.rectangles.shape[0]) for state in self.checking_states}
@@ -110,7 +110,7 @@ class Synthesis:
         q_yes = np.zeros(self.nr_states, dtype=bool)
         q_no = np.zeros(self.nr_states, dtype=bool)
 
-        for region_type in SAFETY_SPECS[self.spec_type]:
+        for region_type in self.spec:
             if self.dest_tag in region_type:
                 q_yes = np.logical_or(q_yes, self.labels[region_type])
             elif self.obs_tag in region_type:
@@ -418,18 +418,18 @@ class Synthesis:
                 self.q_yes_proj = np.append(self.q_yes_proj, np.where(np.all(np.all(
                     self.projection_rects == region, axis=2), axis=1))[0])
 
-    def plot(self, models: dict, mark_des: bool = False, mark_obs: bool = False, plot_sims: bool = False,
+    def plot(self, models: dict, ss: np.array, mark_des: bool = False, mark_obs: bool = False, plot_sims: bool = False,
              nr_sims: int = 0, sim_states_proj: list = [], plot_des_tags: bool = False,
-             plot_type: int = 'classification', xtick_freq: int = 1, ytick_freq: int = 1, save: bool = False,
+             plot_type: str = 'classification', xtick_freq: int = 1, ytick_freq: int = 1, save: bool = False,
              name: str = 'test', fig_size: tuple = (4, 4),
              plot_legend: bool = False, legend_size: float = 2.5, legend_pad: float = 3):
 
-        spec_tags = list(SAFETY_SPECS[self.spec_type].keys())
+        spec_tags = list(self.spec.keys())
         dest_tags = [tag for tag in spec_tags if self.dest_tag in tag]
         obs_tags = [tag for tag in spec_tags if self.obs_tag in tag]
 
         fig, ax = plt.subplots(figsize=fig_size)
-        ax = generate_domain_limits(ax, plot_x_dims=self.proj_dims, xtick_freq=xtick_freq, ytick_freq=ytick_freq)
+        ax = generate_domain_limits(ax=ax, ss=ss, plot_x_dims=self.proj_dims, xtick_freq=xtick_freq, ytick_freq=ytick_freq)
 
         # simulations --------------------------------------------------------------------------------------------------
         text = {'x1 location': [], 'x2 location': [], 'action': []}

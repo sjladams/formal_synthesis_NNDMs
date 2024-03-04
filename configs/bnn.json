@@ -1,0 +1,18 @@
+{
+  "jackson": {
+    "nr_layers": 1,
+    "nr_neurons":  64,
+    "act_func": "relu",
+    "train_dataset_size": 4000,
+    "epochs": 200,
+    "train_by_keras": true
+  },
+  "linear-fast-center": {
+    "nr_layers": 1,
+    "nr_neurons":  64,
+    "act_func": "relu",
+    "train_dataset_size": 4000,
+    "epochs": 200,
+    "train_by_keras": true
+  }
+}
