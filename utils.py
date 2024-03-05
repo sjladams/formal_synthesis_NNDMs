@@ -76,11 +76,6 @@ def process_spec(specs: dict | list, n: int):
 
 
 def check_params(params):
-    if params['spec_name'] == 'jackson-nl-compl':
-        params['use_ltlf'] = True
-    else:
-        params['use_ltlf'] = False
-
     params['n'] = len(params['dx']) # number of dimensions system
 
     # set list types to np.arrays & check dims
@@ -90,7 +85,7 @@ def check_params(params):
         if not params[key].shape[-1] == params['n']:
             raise ValueError(f"param: {key} should be of dims {params['n']}")
 
-    params['spec'] = process_spec(params['spec'], params['n'])
+    params['spec']['labeling'] = process_spec(params['spec']['labeling'], params['n'])
 
     # construct systems
     params['systems'] = [f"{params['system_name']}-mode{mode_id}" for mode_id in params['modes']]

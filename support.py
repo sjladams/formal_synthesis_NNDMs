@@ -211,20 +211,20 @@ def cartesian_product(arrays, out=None):
     return out
 
 
-def merge_q_yes_q_no_regions(rectangles: np.array, ss: np.array, spec: dict, synthesis: 'Synthesis'):
+def merge_q_yes_q_no_regions(rectangles: np.array, ss: np.array, labeling: dict, synthesis: 'Synthesis'):
     # \TODO check assumption that is we don't use LTL, so considering G(..) and F(..) problems, discretizing Qyes doesn't  impact synthesis results..
-    if synthesis.use_ltlf:
+    if not synthesis.bounded_until_problem:
         Q2check = synthesis.q_no.astype(int)
     else:
         Q2check = np.union1d(synthesis.q_no, synthesis.q_yes).astype(int)
 
     # check if points are 'fully' connected, i.e. over
     remove2replace = dict()
-    for specRegion in spec:
-        for regionTag in spec[specRegion]:
+    for specRegion in labeling:
+        for regionTag in labeling[specRegion]:
             region = copy(ss)
-            for dim in spec[specRegion][regionTag]:
-                region[int(dim)] = spec[specRegion][regionTag][dim]
+            for dim in labeling[specRegion][regionTag]:
+                region[int(dim)] = labeling[specRegion][regionTag][dim]
 
             to_remove = Q2check[np.all(np.logical_and(rectangles[Q2check][:, :, 0] >= region[:, 0],
                                                      rectangles[Q2check][:, :, 1] <= region[:, 1]), axis=1)]

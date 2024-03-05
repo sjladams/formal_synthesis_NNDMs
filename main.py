@@ -3,6 +3,9 @@ from imdp import IMDP
 from synthesis import Synthesis
 from support import generate_discretization, import_model, merge_q_yes_q_no_regions, get_crown_bounds
 
+# \TODO:
+# - phase out numpy, use torch tensors as basis
+
 if __name__ == '__main__':
     args = utils.parse_arguments()
     params = utils.load_params(args)
@@ -17,7 +20,8 @@ if __name__ == '__main__':
     synthesis = Synthesis(imdp=imdp, **params)
 
     tags2remove, new_rectangles, new_centers = merge_q_yes_q_no_regions(rectangles=imdp.rectangles, ss=params['ss'],
-                                                                        spec=params['spec'], synthesis=synthesis)
+                                                                        labeling=params['spec']['labeling'],
+                                                                        synthesis=synthesis)
     crown_bounds_all = get_crown_bounds(models, new_rectangles, new_centers, crown_bounds_all)
     imdp.merge(tags2remove, new_rectangles, new_centers, crown_bounds_all)
     synthesis.update_grid_elements()

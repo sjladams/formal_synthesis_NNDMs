@@ -99,9 +99,9 @@ class IMC:
 
 
 def bound_transition_kernel(A_u, A_l, b_u, b_l, vertices, centers, rectangles, grid_sorting, std: np.array):
-    H = np.concatenate((np.matmul(vertices, np.moveaxis(A_u, 2, 1)) + np.repeat(b_u[:, np.newaxis], axis=1,
+    H = np.concatenate((np.matmul(vertices, np.swapaxes(A_u, -2, -1)) + np.repeat(b_u[:, np.newaxis], axis=1,
                                                                                 repeats=vertices.shape[1]),
-                        np.matmul(vertices, np.moveaxis(A_l, 2, 1)) + np.repeat(b_l[:, np.newaxis], axis=1,
+                        np.matmul(vertices, np.swapaxes(A_l, -2, -1)) + np.repeat(b_l[:, np.newaxis], axis=1,
                                                                                 repeats=vertices.shape[1])), axis=1)
 
     # Overapproximation One-step reachable polytope
@@ -114,9 +114,9 @@ def bound_transition_kernel(A_u, A_l, b_u, b_l, vertices, centers, rectangles, g
     trans_bounds = trans_bounds.detach().numpy()
 
     # TEMP
-    H_u = np.matmul(vertices, np.moveaxis(A_u, 2, 1)) + np.repeat(b_u[:, np.newaxis], axis=1,
+    H_u = np.matmul(vertices, np.swapaxes(A_u, -2, -1)) + np.repeat(b_u[:, np.newaxis], axis=1,
                                                                   repeats=vertices.shape[1])
-    H_l = np.matmul(vertices, np.moveaxis(A_l, 2, 1)) + np.repeat(b_l[:, np.newaxis], axis=1,
+    H_l = np.matmul(vertices, np.swapaxes(A_l, -2, -1)) + np.repeat(b_l[:, np.newaxis], axis=1,
                                                                   repeats=vertices.shape[1])
     TEST_CROWN_PERF = {'H_u': H_u, 'H_l': H_l, 'H_rects': H_rects}
     return trans_bounds
