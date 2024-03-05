@@ -7,23 +7,22 @@ import torch
 from scipy import sparse
 import matplotlib.pyplot as plt
 from copy import copy
+import bound_propagation
 
-from parameters import STATE_SPACE, DIMS, NEURONS, HIDDEN_LAYERS, ACT_FUNC_TYPE
 from nn import train_model, load_model
 from systems import ImportSystem
-from safety_specifications import SAFETY_SPECS
 
 DIRPATH = os.path.dirname(__file__)
 
 
-def generate_discretization(dx: np.array, add_full: bool = True):
+def generate_discretization(dx: np.array, ss: np.array, add_full: bool = True, **kwargs):
     axis_range = [np.arange(state_space_elem[0], state_space_elem[1] + dx_elem * 0.5, dx_elem)
-                    for state_space_elem, dx_elem in zip(STATE_SPACE, dx)]
+                    for state_space_elem, dx_elem in zip(ss, dx)]
     intervals = [list(np.vstack((elem[0:-1], elem[1:])).T) for elem in axis_range]
     rectangles = np.array(list(itertools.product(*intervals)))
 
     if add_full:
-        rectangles = np.concatenate((rectangles, STATE_SPACE[np.newaxis]), axis=0)
+        rectangles = np.concatenate((rectangles, ss[np.newaxis]), axis=0)
 
     x_centers = np.round(np.average(rectangles, axis=2), 4)
     return rectangles, x_centers
@@ -33,10 +32,11 @@ def overlap_discretization(rectangles):
     """
     Sort overlapping rectangles dimension-wise.
     """
-    sorted_rectangles = {'intervalsX': dict()}
+    n = rectangles.shape[-2]
 
-    for nrDim in range(1, DIMS + 1):
-        dim_combis = list(itertools.combinations(range(0, DIMS), r=nrDim))
+    sorted_rectangles = {'intervalsX': dict()}
+    for nrDim in range(1, n + 1):
+        dim_combis = list(itertools.combinations(range(0, n), r=nrDim))
         sorted_rectangles[nrDim] = dict()
         for dim_combi in dim_combis:
             if len(dim_combi) == 1:
@@ -137,7 +137,9 @@ def get_crown_bounds(models: dict, hypercubes: np.array, centers: np.array, crow
     for tag in models:
         lower_intervals = torch.from_numpy(hypercubes[:, :, 0]).float()
         upper_intervals = torch.from_numpy(hypercubes[:, :, 1]).float()
-        (As_L, bs_L), (As_U, bs_U) = models[tag]['nn'].crown_linear(lower_intervals, upper_intervals)
+        hyperrectangle = bound_propagation.HyperRectangle(lower_intervals, upper_intervals)
+        linearbounds = models[tag]['nn'].crown(hyperrectangle)
+        (As_L, bs_L), (As_U, bs_U) = linearbounds.lower, linearbounds.upper
 
         As_L = As_L.detach().numpy()
         bs_L = bs_L.detach().numpy()
@@ -152,38 +154,41 @@ def get_crown_bounds(models: dict, hypercubes: np.array, centers: np.array, crow
     return crown_bounds
 
 
-def import_model(system_type: str, plot: bool):
-    system = ImportSystem(system_type)
+def get_model_name(system_tag: str, nr_layers: int, nr_neurons: int, act_func: str, ss: np.array, **kwargs):
+    return '{}_[{},{}]_{}_ss={}_{}'.format(system_tag, nr_layers, nr_neurons, act_func,
+                                                 np.round(ss[:, 0], 2), np.round(ss[:, 1], 2))
 
-    model_name = 'torch_nn_model_{}_dimX{}_ss{}_{}_NEUR{}_LAY{}_ACTF_{}'.format(system_type, DIMS,
-                    np.round(STATE_SPACE[:, 0], 2), np.round(STATE_SPACE[:, 1], 2), NEURONS, HIDDEN_LAYERS,
-                                                                                ACT_FUNC_TYPE)
-    model_path = DIRPATH + f"/models/{model_name}"
+
+def import_model(system_tag: str, plot: bool = True, **kwargs):
+    system = ImportSystem(system_tag)
+
+    model_name = get_model_name(system_tag=system_tag, **kwargs)
+    model_path = DIRPATH + f"/models/{model_name}.pt"
     check = os.path.exists(model_path)
 
     if check:
-        model = load_model(model_path, system, plot)
+        model = load_model(model_path=model_path, system=system, plot=plot, **kwargs)
         print('used pre-trained model')
     else:
-        model = train_model(model_path, system, plot)
+        model = train_model(model_path=model_path, system=system, plot=plot, **kwargs)
     return {'sys': system, 'nn': model}
 
 
-def generate_domain_limits(ax, plot_x_dims=[0, 1], xtick_freq=None, ytick_freq=None):
-    ax.set_xlim(STATE_SPACE[plot_x_dims[0], 0], STATE_SPACE[plot_x_dims[0], 1])
-    ax.set_ylim(STATE_SPACE[plot_x_dims[1], 0], STATE_SPACE[plot_x_dims[1], 1])
+def generate_domain_limits(ax, ss, plot_x_dims=[0, 1], xtick_freq=None, ytick_freq=None):
+    ax.set_xlim(ss[plot_x_dims[0], 0], ss[plot_x_dims[0], 1])
+    ax.set_ylim(ss[plot_x_dims[1], 0], ss[plot_x_dims[1], 1])
     if xtick_freq is not None:
-        if xtick_freq > STATE_SPACE[plot_x_dims[0], 1] - STATE_SPACE[plot_x_dims[0], 0]:
+        if xtick_freq > ss[plot_x_dims[0], 1] - ss[plot_x_dims[0], 0]:
             ax.set_xticks([])
         else:
-            xticks = np.arange(STATE_SPACE[plot_x_dims[0], 0], STATE_SPACE[plot_x_dims[0], 1] + 0.5 * xtick_freq,
+            xticks = np.arange(ss[plot_x_dims[0], 0], ss[plot_x_dims[0], 1] + 0.5 * xtick_freq,
                                xtick_freq)
             ax.set_xticks(xticks)
     if ytick_freq is not None:
-        if ytick_freq > STATE_SPACE[plot_x_dims[1], 1] - STATE_SPACE[plot_x_dims[1], 0]:
+        if ytick_freq > ss[plot_x_dims[1], 1] - ss[plot_x_dims[1], 0]:
             ax.set_yticks([])
         else:
-            yticks = np.arange(STATE_SPACE[plot_x_dims[1], 0], STATE_SPACE[plot_x_dims[1], 1] + 0.5 * ytick_freq,
+            yticks = np.arange(ss[plot_x_dims[1], 0], ss[plot_x_dims[1], 1] + 0.5 * ytick_freq,
                                ytick_freq)
             ax.set_yticks(yticks)
     return ax
@@ -206,20 +211,20 @@ def cartesian_product(arrays, out=None):
     return out
 
 
-def merge_q_yes_q_no_regions(rectangles: np.array, synthesis: 'Synthesis'):
+def merge_q_yes_q_no_regions(rectangles: np.array, ss: np.array, labeling: dict, synthesis: 'Synthesis'):
     # \TODO check assumption that is we don't use LTL, so considering G(..) and F(..) problems, discretizing Qyes doesn't  impact synthesis results..
-    if synthesis.use_ltlf:
+    if not synthesis.bounded_until_problem:
         Q2check = synthesis.q_no.astype(int)
     else:
         Q2check = np.union1d(synthesis.q_no, synthesis.q_yes).astype(int)
 
     # check if points are 'fully' connected, i.e. over
     remove2replace = dict()
-    for specRegion in SAFETY_SPECS[synthesis.spec_type]:
-        for regionTag in SAFETY_SPECS[synthesis.spec_type][specRegion]:
-            region = copy(STATE_SPACE)
-            for dim in SAFETY_SPECS[synthesis.spec_type][specRegion][regionTag]:
-                region[dim] = SAFETY_SPECS[synthesis.spec_type][specRegion][regionTag][dim]
+    for specRegion in labeling:
+        for regionTag in labeling[specRegion]:
+            region = copy(ss)
+            for dim in labeling[specRegion][regionTag]:
+                region[int(dim)] = labeling[specRegion][regionTag][dim]
 
             to_remove = Q2check[np.all(np.logical_and(rectangles[Q2check][:, :, 0] >= region[:, 0],
                                                      rectangles[Q2check][:, :, 1] <= region[:, 1]), axis=1)]

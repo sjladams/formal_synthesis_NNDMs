@@ -1,0 +1,16 @@
+{
+  "jackson": {
+    "k": 10,
+    "p": 0.95,
+    "refine": false,
+    "nr_iterations": 2,
+    "proj_dims": [0, 1]
+  },
+  "linear-fast-center": {
+    "k": 10,
+    "p": 0.95,
+    "refine": false,
+    "nr_iterations": 2,
+    "proj_dims": [0, 1]
+  }
+}

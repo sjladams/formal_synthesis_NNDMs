@@ -10,19 +10,33 @@ from numba import jit
 import subprocess
 import matplotlib.colors as mcolors
 
+from ltlf2dfa.parser.ltlf import LTLfParser
+import pydot
+
 from support import order_pol_points, generate_domain_limits, cartesian_product
-from safety_specifications import SAFETY_SPECS
-from parameters import STATE_SPACE
 
 DIRPATH = os.path.dirname(__file__)
 
+
 class Synthesis:
-    def __init__(self, imdp: 'IMDP', spec_type: str, k: int = 10, p: float = 0.95, bound: str = '>=',
-                 use_cpp: bool = False, proj_dims: list = [0, 1], use_LTL: bool = False,
-                 dest_tag: str = 'D', obs_tag: str = 'O'):
-        self.use_ltlf = use_LTL
+    def __init__(self, imdp: 'IMDP', ss: np.array, spec: dict, k: int = 10, p: float = 0.95, bound: str = '>=',
+                 use_cpp: bool = False, proj_dims: list = [0, 1],
+                 dest_tag: str = 'd', obs_tag: str = 'o', **kwargs):
+        self.ss = ss
         self.proj_dims = proj_dims
-        self.spec_type = spec_type
+
+        self.labeling = spec['labeling']
+        self.ltlf_formula = spec['ltlf_formula']
+        if not dest_tag in self.ltlf_formula and not obs_tag in self.ltlf_formula:
+            raise ValueError(f'check ltlf formula, you should use: {dest_tag} to indicate desired regions and'
+                             f'{obs_tag} to indicate obstacles')
+        self.label_types = list(self.labeling.keys())
+
+        if self.ltlf_formula == "G(!o) & F(d)":
+            self.bounded_until_problem = True
+        else:
+            self.bounded_until_problem = False
+
         self.k = k
         self.p = p
         self.bound = bound
@@ -34,9 +48,18 @@ class Synthesis:
 
         self.name = 'example'
 
-        # \TODO add automatic LTL formula generation
-        if self.use_ltlf:
-            # -- LTL ------------------------------------------------------------------------------------------------------
+        if not self.bounded_until_problem:
+            parser = LTLfParser()
+            formula = parser(self.ltlf_formula)
+            dfa = formula.to_dfa()
+            graph = pydot.graph_from_dot_data(dfa)[0]
+
+            self.P_masks_LTL = get_trans_probs_dfa(self.label_types, graph)
+            self.basis_Vmin = np.zeros(self.P_masks_LTL[list(self.P_masks_LTL.keys())[0]].shape[0])
+            self.basis_Vmin[get_target_node(graph)-1] = 1
+
+            # -- LTL -> DFA (http://ltlf2dfa.diag.uniroma1.it/)
+            # # G(!O) & F(D)
             # self.P_masks_LTL = {'D': np.array([[0, 1, 0],
             #                                             [0, 1, 0],
             #                                             [0, 0, 1]]),
@@ -46,27 +69,30 @@ class Synthesis:
             #                   'none': np.array([[1, 0, 0],
             #                                     [0, 1, 0],
             #                                     [0, 0, 1]])}
-            self.P_masks_LTL = {'D1': np.array([[0, 0, 1, 0, 0],
-                                                [0, 0, 0, 1, 0],
-                                                [0, 0, 1, 0, 0],
-                                                [0, 0, 0, 1, 0],
-                                                [0, 0, 0, 0, 1]]),
-                                'D2': np.array([[0, 1, 0, 0, 0],
-                                                [0, 1, 0, 0, 0],
-                                                [0, 0, 0, 1, 0],
-                                                [0, 0, 0, 1, 0],
-                                                [0, 0, 0, 0, 1]]),
-                                'O': np.array([[0, 0, 0, 0, 1],
-                                               [0, 0, 0, 0, 1],
-                                               [0, 0, 0, 0, 1],
-                                               [0, 0, 0, 0, 1],
-                                               [0, 0, 0, 0, 1]]),
-                                'none': np.array([[1, 0, 0, 0, 0],
-                                                  [0, 1, 0, 0, 0],
-                                                  [0, 0, 1, 0, 0],
-                                                  [0, 0, 0, 1, 0],
-                                                  [0, 0, 0, 0, 1]])}
-            self.basis_Vmin = np.array([0, 0, 0, 1, 0])
+            # self.basis_Vmin = np.array([0, 1, 0])
+
+            # # G(!O) & F(D1) & F(D2)
+            # self.P_masks_LTL = {'D1': np.array([[0, 0, 1, 0, 0],
+            #                                     [0, 0, 0, 1, 0],
+            #                                     [0, 0, 1, 0, 0],
+            #                                     [0, 0, 0, 1, 0],
+            #                                     [0, 0, 0, 0, 1]]),
+            #                     'D2': np.array([[0, 1, 0, 0, 0],
+            #                                     [0, 1, 0, 0, 0],
+            #                                     [0, 0, 0, 1, 0],
+            #                                     [0, 0, 0, 1, 0],
+            #                                     [0, 0, 0, 0, 1]]),
+            #                     'O': np.array([[0, 0, 0, 0, 1],
+            #                                    [0, 0, 0, 0, 1],
+            #                                    [0, 0, 0, 0, 1],
+            #                                    [0, 0, 0, 0, 1],
+            #                                    [0, 0, 0, 0, 1]]),
+            #                     'none': np.array([[1, 0, 0, 0, 0],
+            #                                       [0, 1, 0, 0, 0],
+            #                                       [0, 0, 1, 0, 0],
+            #                                       [0, 0, 0, 1, 0],
+            #                                       [0, 0, 0, 0, 1]])}
+            # self.basis_Vmin = np.array([0, 0, 0, 1, 0])
             self.nr_S_states = list(self.P_masks_LTL.values())[0].shape[0]
 
         # -----------------------------------------------------------------------------------------------------------
@@ -82,25 +108,24 @@ class Synthesis:
         if hasattr(self, 'checking_states'):
             self.init_labels()
             self.find_q_yes_q_no() # \TODO Disable when we're not running ltlf
-            if self.use_ltlf:
+            if not self.bounded_until_problem:
                 self.init_ltlf_steps()
 
     def init_checking_state_regions(self):
-        region_types = list(SAFETY_SPECS[self.spec_type].keys())
         self.checking_states = dict()
-        for regionType in region_types:
+        for regionType in self.label_types:
             self.checking_states[regionType] = dict()
-            for tag in SAFETY_SPECS[self.spec_type][regionType]:
-                self.checking_states[regionType][tag] = copy(STATE_SPACE)
-                for dim in SAFETY_SPECS[self.spec_type][regionType][tag]:
-                    self.checking_states[regionType][tag][dim] = SAFETY_SPECS[self.spec_type][regionType][tag][dim]
+            for tag in self.labeling[regionType]:
+                self.checking_states[regionType][tag] = copy(self.ss)
+                for dim in self.labeling[regionType][tag]:
+                    self.checking_states[regionType][tag][int(dim),:] = self.labeling[regionType][tag][dim]
 
     def init_labels(self):
         self.labels = {state: np.zeros(self.imdp.rectangles.shape[0]) for state in self.checking_states}
         for tag, cube in enumerate(self.imdp.rectangles[:-1]):
             for regionType in self.checking_states:
                 for regionTag in self.checking_states[regionType]:
-                    if check_overlap_Intervals(cube, self.checking_states[regionType][regionTag]):
+                    if check_overlap_intervals(cube, self.checking_states[regionType][regionTag]):
                         self.labels[regionType][tag] = 1
 
         label_values = np.array(list(self.labels.values()))
@@ -110,7 +135,7 @@ class Synthesis:
         q_yes = np.zeros(self.nr_states, dtype=bool)
         q_no = np.zeros(self.nr_states, dtype=bool)
 
-        for region_type in SAFETY_SPECS[self.spec_type]:
+        for region_type in self.labeling:
             if self.dest_tag in region_type:
                 q_yes = np.logical_or(q_yes, self.labels[region_type])
             elif self.obs_tag in region_type:
@@ -153,10 +178,10 @@ class Synthesis:
                                           self.nr_actions), :] = P_max_prod
 
     def run_synthesis(self):
-        if self.use_ltlf:
-            self.solve_for_ltlf()
-        else:
+        if self.bounded_until_problem:
             self.bounded_until()
+        else:
+            self.solve_for_ltlf()
         self.apply_projection()
 
     def solve_for_ltlf(self):
@@ -176,9 +201,9 @@ class Synthesis:
             min_mdp, max_mdp = value_iteration(torch.from_numpy(self.steps_min_ltlf),
                                                torch.from_numpy(self.steps_max_ltlf),
                                                ind_ascend, ind_descend)
-
-            ind_min = np.matmul(min_mdp.detach().numpy(), v_min)
-            ind_max = np.matmul(max_mdp.detach().numpy(), v_max)
+            min_mdp, max_mdp = min_mdp.detach().numpy(), max_mdp.detach().numpy()
+            ind_min = np.matmul(min_mdp, v_min)
+            ind_max = np.matmul(max_mdp, v_max)
 
             ctrl = np.zeros(self.steps_max_ltlf.shape[1], dtype=int)
             if self.nr_actions > 1:
@@ -418,18 +443,18 @@ class Synthesis:
                 self.q_yes_proj = np.append(self.q_yes_proj, np.where(np.all(np.all(
                     self.projection_rects == region, axis=2), axis=1))[0])
 
-    def plot(self, models: dict, mark_des: bool = False, mark_obs: bool = False, plot_sims: bool = False,
+    def plot(self, models: dict, ss: np.array, mark_des: bool = False, mark_obs: bool = False, plot_sims: bool = False,
              nr_sims: int = 0, sim_states_proj: list = [], plot_des_tags: bool = False,
-             plot_type: int = 'classification', xtick_freq: int = 1, ytick_freq: int = 1, save: bool = False,
+             plot_type: str = 'classification', xtick_freq: int = 1, ytick_freq: int = 1, save: bool = False,
              name: str = 'test', fig_size: tuple = (4, 4),
              plot_legend: bool = False, legend_size: float = 2.5, legend_pad: float = 3):
 
-        spec_tags = list(SAFETY_SPECS[self.spec_type].keys())
+        spec_tags = list(self.labeling.keys())
         dest_tags = [tag for tag in spec_tags if self.dest_tag in tag]
         obs_tags = [tag for tag in spec_tags if self.obs_tag in tag]
 
         fig, ax = plt.subplots(figsize=fig_size)
-        ax = generate_domain_limits(ax, plot_x_dims=self.proj_dims, xtick_freq=xtick_freq, ytick_freq=ytick_freq)
+        ax = generate_domain_limits(ax=ax, ss=ss, plot_x_dims=self.proj_dims, xtick_freq=xtick_freq, ytick_freq=ytick_freq)
 
         # simulations --------------------------------------------------------------------------------------------------
         text = {'x1 location': [], 'x2 location': [], 'action': []}
@@ -588,7 +613,7 @@ def check_overlap(a, b):
     return max(0, min(a[1], b[1]) - max(a[0], b[0])) > 0
 
 
-def check_overlap_Intervals(a, b):
+def check_overlap_intervals(a, b):
     if a.shape[0] >= b.shape[0]:
         for dim in range(0, a.shape[0]):
             check = True
@@ -682,3 +707,73 @@ def reshape_fortran(x, shape):
     if len(x.shape) > 0:
         x = x.permute(*reversed(range(len(x.shape))))
     return x.reshape(*reversed(shape)).permute(*reversed(range(len(shape))))
+
+
+def translate(value: str, label_types: list):
+    holder = np.zeros(len(label_types))
+    for idx, label in enumerate(label_types):
+        if value in ['None']:
+            print('hier')
+        elif f"~{label}" in value:
+            holder[idx] = -1
+        elif label in value:
+            holder[idx] = 1
+    return holder
+
+
+def translate(value: str, label_types: list):
+    holder = np.zeros(len(label_types))
+    for idx, label in enumerate(label_types):
+        if value in ['None']:
+            print('hier')
+        elif f"~{label}" in value:
+            holder[idx] = -1
+        elif label in value:
+            holder[idx] = 1
+    return holder
+
+
+def get_trans_probs_dfa(label_types, graph):
+    #     # directly work in list format, e.g., 'd & o' -> ['d', 'o'], correct order is guaranteed
+    #     labels = [[item, f"~{item}"] for item in label_types]
+    #     labels = [list(label) for label in list(itertools.product(*labels)) if label != tuple(label_types)]
+
+    # alternative via mask
+    masks = np.full((len(label_types) + 1, len(label_types)), '~')
+    np.fill_diagonal(masks, '')
+    labels = [[f"{elem1}{elem2}" for elem1, elem2 in zip(mask, label_types)] for mask in masks]
+
+    # process lables work with numpy arrays
+    labels = [[-1 if '~' in elem else 1 for elem in label] for label in labels]
+    label_types = np.array(label_types)
+    labels = np.array(labels)
+
+    print(labels)
+
+    states = [edge.get_source() for edge in graph.get_edges()]
+    states = list(set(states))
+    states.remove('init')
+
+    edges = {(int(edge.get_source()) - 1, int(edge.get_destination()) - 1): str(edge.get_label()).replace('"', '')
+             for edge in graph.get_edges() if not edge.get_source() == 'init'}
+    edges = {key: translate(value, label_types) for key, value in edges.items()}
+
+    print(edges)
+
+    # construct trans matrices
+    matrices = np.zeros((len(labels), len(states), len(states)))
+    for idx, label in enumerate(labels):
+        for edge, value in edges.items():
+            if (label * value >= 0).all():
+                matrices[idx][edge] = 1
+
+    return {label: matrices[idx] for idx, label in enumerate(list(label_types) + ['none'])}
+
+
+def get_target_node(graph):
+    node_names = list(graph.obj_dict['nodes'].keys())
+    node_names.remove('init')
+    node_names.remove('edge')
+    node_names.remove('node')
+    node_names.remove('1')
+    return int(node_names[0])

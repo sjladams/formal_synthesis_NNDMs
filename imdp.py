@@ -4,26 +4,24 @@ from copy import copy
 import torch
 
 from support import overlap_discretization, cartesian_product, group_grid_wrt_rectangles
-from parameters import STD
 
 
 class IMDP:
-    def __init__(self, rectangles: np.array, centers: np.array, crown_bounds_all: dict):
+    def __init__(self, rectangles: np.array, centers: np.array, crown_bounds_all: dict, std: np.array):
         self.rectangles = rectangles
         self.centers = centers
         self.grid_sorting = overlap_discretization(rectangles)
         self.vertices = np.array(list(map(cartesian_product, self.rectangles)))
-
         self.crown_bounds_all = crown_bounds_all
+        self.std = std
 
         # Compute Bounds on Transition Probabilities
         self.imcs = dict()
         for tag in crown_bounds_all:
             imc = IMC(tag)
             imc.A_u, imc.A_l, imc.b_u, imc.b_l = get_explicit_bounds(crown_bounds_all[tag], centers)
-            imc.trans_bounds = bound_transition_kernel(imc.A_u, imc.A_l, imc.b_u, imc.b_l,
-                                                                        self.vertices, self.centers,
-                                                                        self.rectangles, self.grid_sorting)
+            imc.trans_bounds = bound_transition_kernel(imc.A_u, imc.A_l, imc.b_u, imc.b_l, self.vertices,
+                                                       self.centers, self.rectangles, self.grid_sorting, self.std)
             imc.trans_bounds[:, -1, :] = np.array([1 - imc.trans_bounds[:, -1, 1], 1 - imc.trans_bounds[:, -1, 0]]).T
             imc.trans_bounds[-1, :, :] = 0
             imc.trans_bounds[-1, -1, :] = 1
@@ -59,15 +57,15 @@ class IMDP:
         # part3 \in (|SRefined| x |STildeRefined|)
 
         trans_bounds_part1 = bound_transition_kernel(A_u, A_l, b_u, b_l, new_vertices, self.centers, self.rectangles,
-                                                     self.grid_sorting)
+                                                     self.grid_sorting, self.std)
         trans_bounds_part1[:, -1, :] = np.array([1 - trans_bounds_part1[:, -1, 1], 1 - trans_bounds_part1[:, -1, 0]]).T
 
         trans_bounds_part2 = bound_transition_kernel(imc.A_u, imc.A_l, imc.b_u, imc.b_l, self.vertices, new_centers,
-                                                     new_rectangles, new_grid_sorting)
+                                                     new_rectangles, new_grid_sorting, self.std)
         trans_bounds_part2[-1, :, :] = 0
 
         trans_bounds_part3 = bound_transition_kernel(A_u, A_l, b_u, b_l, new_vertices, new_centers, new_rectangles,
-                                                     new_grid_sorting)
+                                                     new_grid_sorting, self.std)
 
         # First merge, then remove, because part 2 also contains the old x regions, is possible because we append (-1)
         # the refined values
@@ -100,10 +98,10 @@ class IMC:
         self.tag = tag
 
 
-def bound_transition_kernel(A_u, A_l, b_u, b_l, vertices, centers, rectangles, grid_sorting):
-    H = np.concatenate((np.matmul(vertices, np.moveaxis(A_u, 2, 1)) + np.repeat(b_u[:, np.newaxis], axis=1,
+def bound_transition_kernel(A_u, A_l, b_u, b_l, vertices, centers, rectangles, grid_sorting, std: np.array):
+    H = np.concatenate((np.matmul(vertices, np.swapaxes(A_u, -2, -1)) + np.repeat(b_u[:, np.newaxis], axis=1,
                                                                                 repeats=vertices.shape[1]),
-                        np.matmul(vertices, np.moveaxis(A_l, 2, 1)) + np.repeat(b_l[:, np.newaxis], axis=1,
+                        np.matmul(vertices, np.swapaxes(A_l, -2, -1)) + np.repeat(b_l[:, np.newaxis], axis=1,
                                                                                 repeats=vertices.shape[1])), axis=1)
 
     # Overapproximation One-step reachable polytope
@@ -112,21 +110,20 @@ def bound_transition_kernel(A_u, A_l, b_u, b_l, vertices, centers, rectangles, g
 
     grid_masks = group_grid_wrt_rectangles(H_rects, grid_sorting)
 
-    trans_bounds = get_trans_bounds(H, H_rects, centers, rectangles, grid_masks,
-                                    use_H=True)
+    trans_bounds = get_trans_bounds(H, H_rects, centers, rectangles, grid_masks, std, use_H=True)
     trans_bounds = trans_bounds.detach().numpy()
 
     # TEMP
-    H_u = np.matmul(vertices, np.moveaxis(A_u, 2, 1)) + np.repeat(b_u[:, np.newaxis], axis=1,
+    H_u = np.matmul(vertices, np.swapaxes(A_u, -2, -1)) + np.repeat(b_u[:, np.newaxis], axis=1,
                                                                   repeats=vertices.shape[1])
-    H_l = np.matmul(vertices, np.moveaxis(A_l, 2, 1)) + np.repeat(b_l[:, np.newaxis], axis=1,
+    H_l = np.matmul(vertices, np.swapaxes(A_l, -2, -1)) + np.repeat(b_l[:, np.newaxis], axis=1,
                                                                   repeats=vertices.shape[1])
     TEST_CROWN_PERF = {'H_u': H_u, 'H_l': H_l, 'H_rects': H_rects}
     return trans_bounds
 
 
 def get_trans_bounds(H: np.array, H_rects: np.array, grid_centers: np.array, grid_rects: np.array, grid_masks: dict,
-                     use_H: bool = False): # \TODO rewrite using einsum
+                     std: np.array, use_H: bool = False): # \TODO rewrite using einsum
     # TEMP TRANSFORM
     H_rects = torch.from_numpy(H_rects).float()
     grid_centers = torch.from_numpy(grid_centers).float()
@@ -137,7 +134,7 @@ def get_trans_bounds(H: np.array, H_rects: np.array, grid_centers: np.array, gri
     groups = list(itertools.product([0, 1, 2], repeat=n))
     nr_H_rects = H_rects.shape[0]
     nr_grid_rects = grid_centers.shape[0]
-    std_torch = torch.from_numpy(STD)
+    std_torch = torch.from_numpy(std)
 
     # find locations ----------------------------------------------------------------------------------------------
     max_locs = torch.zeros((nr_H_rects, nr_grid_rects, n))
